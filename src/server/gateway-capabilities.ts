@@ -470,7 +470,24 @@ async function probeChatCompletions(): Promise<boolean> {
     if (getRes.status === 405) return true
     if (getRes.ok) return true
     if (getRes.status === 400 || getRes.status === 422) return true
-    if (getRes.status === 404) return false
+    if (getRes.status === 404) {
+      // Some OpenAI-compatible backends (e.g. `hermes proxy`) only route POST
+      // for /v1/chat/completions and return 404 — not 405 — for GET. Confirm
+      // the endpoint exists with a lightweight POST: an empty body triggers a
+      // validation error (400/422) on a real endpoint and 404 on an absent one.
+      // No tokens are spent because the request fails validation before inference.
+      try {
+        const postRes = await fetch(`${CLAUDE_API}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: '{}',
+          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        })
+        return postRes.status !== 404
+      } catch {
+        return false
+      }
+    }
     return true
   } catch {
     return false
