@@ -1,13 +1,14 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { json } from '@tanstack/react-start'
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { json } from '@tanstack/react-start'
+import { createFileRoute } from '@tanstack/react-router'
 import { isAuthenticated } from '../../server/auth-middleware'
 import { rosterByWorkerId } from '../../server/swarm-roster'
 import { resolveSwarmModelLabel } from '../../server/swarm-model-resolver'
 import { syncSwarmProfileModel } from '../../server/swarm-profile-config'
+import { resolveHermesBin } from '../../server/claude-paths'
 
 // Inlined to avoid SSR module-resolution races against freshly-written
 // helpers; mirrors `src/server/claude-paths.ts` getProfilesDir().
@@ -78,24 +79,6 @@ function tmuxHasSession(tmuxBin: string, name: string): Promise<boolean> {
 
 function validateWorkerId(value: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(value)
-}
-
-const HERMES_BIN_CANDIDATES = [
-  process.env.HERMES_CLI_BIN,
-  join(homedir(), '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes'),
-  join(homedir(), '.local', 'bin', 'hermes'),
-  'hermes',
-].filter((value): value is string => Boolean(value))
-
-function resolveHermesBin(): string {
-  for (const candidate of HERMES_BIN_CANDIDATES) {
-    if (candidate.includes('/')) {
-      if (existsSync(candidate)) return candidate
-      continue
-    }
-    return candidate
-  }
-  return 'hermes'
 }
 
 function startSession(
@@ -204,7 +187,7 @@ export const Route = createFileRoute('/api/swarm-tmux-start')({
         // pass `--model`, so this is the only way the roster value is
         // honored. Best-effort: unrecognised labels (typos, custom
         // models) are left as-is so a worker never gets wedged. See #236.
-        let modelSync: {
+        const modelSync: {
           attempted: boolean
           changed: boolean
           target?: string
