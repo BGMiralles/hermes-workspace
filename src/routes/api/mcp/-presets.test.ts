@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const VALID_SEED = {
   version: 1,
@@ -95,7 +95,10 @@ describe('GET /api/mcp/presets', () => {
 
   it('returns 200 with source=invalid + error fields when user file is malformed', async () => {
     delete process.env.CLAUDE_PASSWORD
-    writeFileSync(join(homeDir, 'mcp-presets.json'), '{not valid json')
+    // The store reads from getStateDir() = HERMES_HOME/workspace (since #439).
+    const stateDir = join(homeDir, 'workspace')
+    mkdirSync(stateDir, { recursive: true })
+    writeFileSync(join(stateDir, 'mcp-presets.json'), '{not valid json')
     const mod = await loadRoute()
     const res = await mod.Route.server.handlers.GET({
       request: new Request('http://localhost/api/mcp/presets'),
@@ -111,7 +114,7 @@ describe('GET /api/mcp/presets', () => {
     expect(body.ok).toBe(false)
     expect(body.source).toBe('invalid')
     expect(body.error).toBeTruthy()
-    expect(body.errorPath).toBe(join(homeDir, 'mcp-presets.json'))
+    expect(body.errorPath).toBe(join(homeDir, 'workspace', 'mcp-presets.json'))
     expect((body.validationErrors ?? []).length).toBeGreaterThan(0)
   })
 })

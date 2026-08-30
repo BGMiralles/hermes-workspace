@@ -5,10 +5,20 @@ import { json } from '@tanstack/react-start'
 import * as yaml from 'yaml'
 import { isAuthenticated } from '../../server/auth-middleware'
 import { getLocalBinDir, getProfilesDir } from '../../server/claude-paths'
-import { formatSwarmWorkerLabel, isSwarmWorkerId, resolveSwarmWorkerDisplayName, rosterByWorkerId } from '../../server/swarm-roster'
+import {
+  formatSwarmWorkerLabel,
+  isSwarmWorkerId,
+  resolveSwarmWorkerDisplayName,
+  rosterByWorkerId,
+} from '../../server/swarm-roster'
 import type { SwarmRosterWorker } from '../../server/swarm-roster'
 
-export type WorkerModelAuthStatus = 'ready' | 'primary-auth-failed' | 'fallback-active' | 'not-configured' | 'unknown'
+export type WorkerModelAuthStatus =
+  | 'ready'
+  | 'primary-auth-failed'
+  | 'fallback-active'
+  | 'not-configured'
+  | 'unknown'
 
 export type WorkerHealth = {
   workerId: string
@@ -49,7 +59,10 @@ export type SwarmHealthSummary = {
   warnings: Array<string>
 }
 
-export function resolveWorkerWrapperName(workerId: string, worker?: Pick<SwarmRosterWorker, 'wrapper'> | null): string {
+export function resolveWorkerWrapperName(
+  workerId: string,
+  worker?: Pick<SwarmRosterWorker, 'wrapper'> | null,
+): string {
   return worker?.wrapper?.trim() || workerId
 }
 
@@ -63,11 +76,17 @@ function listSwarmIds(): Array<string> {
     .sort()
 }
 
-function readWorkerConfig(profilePath: string): { model: string; provider: string } {
+function readWorkerConfig(profilePath: string): {
+  model: string
+  provider: string
+} {
   const configPath = join(profilePath, 'config.yaml')
   if (!existsSync(configPath)) return { model: 'unknown', provider: 'unknown' }
   try {
-    const raw = yaml.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+    const raw = yaml.parse(readFileSync(configPath, 'utf-8')) as Record<
+      string,
+      unknown
+    >
     const modelVal = raw.model
     if (typeof modelVal === 'object' && modelVal !== null) {
       const obj = modelVal as Record<string, unknown>
@@ -87,8 +106,10 @@ function readWorkerConfig(profilePath: string): { model: string; provider: strin
 
 function formatModelDisplay(model: string, provider: string): string {
   const value = `${model} ${provider}`.toLowerCase()
-  if (value.includes('claude-opus-4-7') || value.includes('opus-4-7')) return 'Opus 4.7'
-  if (value.includes('claude-opus-4-6') || value.includes('opus-4-6')) return 'Opus 4.6'
+  if (value.includes('claude-opus-4-7') || value.includes('opus-4-7'))
+    return 'Opus 4.7'
+  if (value.includes('claude-opus-4-6') || value.includes('opus-4-6'))
+    return 'Opus 4.6'
   if (value.includes('gpt-5.5')) return 'GPT-5.5'
   if (value.includes('gpt-5.4')) return 'GPT-5.4'
   if (value.includes('gpt-5.3')) return 'GPT-5.3'
@@ -121,9 +142,15 @@ export function parseModelAuthEventsFromText(text: string): {
     /no .*oauth token found/i,
     /copilot token validation failed/i,
     /classic pat|classic personal access token/i,
-    /\b401\b/i,
-    /\bunauthorized\b/i,
-    /\bauthentication\b/i,
+    /api key (?:is )?(?:invalid|expired|missing|rejected)/i,
+    /invalid[_ ]api[_ ]key/i,
+    /insufficient (?:quota|credits)/i,
+    /quota exceeded/i,
+    /model requires authentication/i,
+    /auth(?:entication)? failed(?:.*(?:provider|openrouter|anthropic|openai|nous|gateway))?/i,
+    /\b(?:openrouter|anthropic|openai|nous|gateway)\b[^\n]{0,80}\b401\b/i,
+    /\b401\b[^\n]{0,80}\b(?:openrouter|anthropic|openai|nous|gateway)\b/i,
+    /(?:openrouter|anthropic|openai|nous|gateway)[^\n]{0,80}\bunauthorized\b/i,
   ]
   const fallbackPatterns = [
     /falling through to fallback:\s*([^/\s]+)\/([^\s]+)/i,
@@ -139,9 +166,15 @@ export function parseModelAuthEventsFromText(text: string): {
   let fallbackModel: string | null = null
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
-    const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d{3})?/)
+    const tsMatch = line.match(
+      /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d{3})?/,
+    )
     const ts = tsMatch?.[1] ?? null
-    if (authPatterns.some((pattern) => pattern.test(line))) {
+    // Scan the log MESSAGE, not the timestamp prefix — otherwise millisecond
+    // components like "…:20,401" false-positive the bare /\b401\b/ class of
+    // pattern (real case: timestamp ",401" flagged a profile as auth-degraded).
+    const message = tsMatch ? line.slice(tsMatch[0].length) : line
+    if (authPatterns.some((pattern) => pattern.test(message))) {
       authErrorCount += 1
       lastAuthErrorAt = ts
       lastAuthErrorMessage = line.slice(0, 320)
@@ -168,12 +201,18 @@ export function parseModelAuthEventsFromText(text: string): {
     lastFallbackMessage,
     fallbackProvider,
     fallbackModel,
-    modelAuthStatus: fallbackActive ? 'fallback-active' : authFailed ? 'primary-auth-failed' : 'unknown',
+    modelAuthStatus: fallbackActive
+      ? 'fallback-active'
+      : authFailed
+        ? 'primary-auth-failed'
+        : 'unknown',
     primaryAuthOk: authFailed || fallbackActive ? false : null,
   }
 }
 
-function scanRecentAuthErrors(profilePath: string): ReturnType<typeof parseModelAuthEventsFromText> {
+function scanRecentAuthErrors(
+  profilePath: string,
+): ReturnType<typeof parseModelAuthEventsFromText> {
   const errorsLog = join(profilePath, 'logs', 'errors.log')
   if (!existsSync(errorsLog)) {
     return parseModelAuthEventsFromText('')
@@ -187,16 +226,41 @@ function scanRecentAuthErrors(profilePath: string): ReturnType<typeof parseModel
   }
 }
 
-export function summarizeSwarmHealth(workers: Array<WorkerHealth>): SwarmHealthSummary {
-  const totalAuthErrors = workers.reduce((sum, worker) => sum + worker.recentAuthErrors, 0)
-  const totalFallbacks = workers.reduce((sum, worker) => sum + worker.recentFallbacks, 0)
-  const workersUsingFallback = workers.filter((worker) => worker.fallbackActive).length
-  const workersPrimaryAuthFailed = workers.filter((worker) => worker.primaryAuthOk === false || worker.modelAuthStatus === 'primary-auth-failed' || worker.modelAuthStatus === 'fallback-active').length
-  const distinctModels = Array.from(new Set(workers.map((w) => formatModelDisplay(w.model, w.provider)))).filter((value) => value !== 'unknown')
-  const distinctProviders = Array.from(new Set(workers.map((w) => formatProviderDisplay(w.provider)))).filter((value) => value !== 'unknown')
+export function summarizeSwarmHealth(
+  workers: Array<WorkerHealth>,
+): SwarmHealthSummary {
+  const totalAuthErrors = workers.reduce(
+    (sum, worker) => sum + worker.recentAuthErrors,
+    0,
+  )
+  const totalFallbacks = workers.reduce(
+    (sum, worker) => sum + worker.recentFallbacks,
+    0,
+  )
+  const workersUsingFallback = workers.filter(
+    (worker) => worker.fallbackActive,
+  ).length
+  const workersPrimaryAuthFailed = workers.filter(
+    (worker) =>
+      worker.primaryAuthOk === false ||
+      worker.modelAuthStatus === 'primary-auth-failed' ||
+      worker.modelAuthStatus === 'fallback-active',
+  ).length
+  const distinctModels = Array.from(
+    new Set(workers.map((w) => formatModelDisplay(w.model, w.provider))),
+  ).filter((value) => value !== 'unknown')
+  const distinctProviders = Array.from(
+    new Set(workers.map((w) => formatProviderDisplay(w.provider))),
+  ).filter((value) => value !== 'unknown')
   const warnings: Array<string> = []
-  if (workersUsingFallback > 0) warnings.push(`${workersUsingFallback} worker(s) used fallback model; primary model auth is degraded.`)
-  if (workersPrimaryAuthFailed > 0) warnings.push(`${workersPrimaryAuthFailed} worker(s) have primary auth failures.`)
+  if (workersUsingFallback > 0)
+    warnings.push(
+      `${workersUsingFallback} worker(s) used fallback model; primary model auth is degraded.`,
+    )
+  if (workersPrimaryAuthFailed > 0)
+    warnings.push(
+      `${workersPrimaryAuthFailed} worker(s) have primary auth failures.`,
+    )
   return {
     totalWorkers: workers.length,
     wrappersConfigured: workers.filter((w) => w.wrapperFound).length,
@@ -206,7 +270,8 @@ export function summarizeSwarmHealth(workers: Array<WorkerHealth>): SwarmHealthS
     workersPrimaryAuthFailed,
     distinctModels,
     distinctProviders,
-    degraded: totalAuthErrors > 0 || totalFallbacks > 0 || workersPrimaryAuthFailed > 0,
+    degraded:
+      totalAuthErrors > 0 || totalFallbacks > 0 || workersPrimaryAuthFailed > 0,
     warnings,
   }
 }
@@ -215,12 +280,23 @@ function hasOpenAiCodexAuth(profilePath: string): boolean {
   const authPath = join(profilePath, 'auth.json')
   if (!existsSync(authPath)) return false
   try {
-    const raw = JSON.parse(readFileSync(authPath, 'utf-8')) as Record<string, unknown>
-    const providers = raw.providers && typeof raw.providers === 'object' ? raw.providers as Record<string, unknown> : raw
+    const raw = JSON.parse(readFileSync(authPath, 'utf-8')) as Record<
+      string,
+      unknown
+    >
+    const providers =
+      raw.providers && typeof raw.providers === 'object'
+        ? (raw.providers as Record<string, unknown>)
+        : raw
     const codex = providers['openai-codex']
     if (!codex || typeof codex !== 'object') return false
     const tokens = (codex as Record<string, unknown>).tokens
-    return Boolean(tokens && typeof tokens === 'object' && (tokens as Record<string, unknown>).access_token && (tokens as Record<string, unknown>).refresh_token)
+    return Boolean(
+      tokens &&
+      typeof tokens === 'object' &&
+      (tokens as Record<string, unknown>).access_token &&
+      (tokens as Record<string, unknown>).refresh_token,
+    )
   } catch {
     return false
   }
@@ -234,8 +310,18 @@ export const Route = createFileRoute('/api/swarm-health')({
           return json({ error: 'Unauthorized' }, { status: 401 })
         }
 
-        const workspaceModel = formatModelDisplay(process.env.HERMES_DEFAULT_MODEL ?? process.env.CLAUDE_DEFAULT_MODEL ?? 'unknown', (process.env.HERMES_API_URL ?? process.env.CLAUDE_API_URL)?.includes('anthropic') ? 'anthropic' : 'unknown')
-        const apiUrl = process.env.HERMES_API_URL ?? process.env.CLAUDE_API_URL ?? null
+        const workspaceModel = formatModelDisplay(
+          process.env.HERMES_DEFAULT_MODEL ??
+            process.env.CLAUDE_DEFAULT_MODEL ??
+            'unknown',
+          (process.env.HERMES_API_URL ?? process.env.CLAUDE_API_URL)?.includes(
+            'anthropic',
+          )
+            ? 'anthropic'
+            : 'unknown',
+        )
+        const apiUrl =
+          process.env.HERMES_API_URL ?? process.env.CLAUDE_API_URL ?? null
         const profilesBase = getProfilesDir()
         const swarmIds = listSwarmIds()
         const wrapperBase = getLocalBinDir()
@@ -248,7 +334,11 @@ export const Route = createFileRoute('/api/swarm-health')({
           const wrapperPath = join(wrapperBase, wrapperName)
           const config = readWorkerConfig(profilePath)
           const errs = scanRecentAuthErrors(profilePath)
-          const primaryReady = errs.authErrorCount === 0 && errs.fallbackCount === 0 && (config.provider !== 'openai-codex' || hasOpenAiCodexAuth(profilePath))
+          const primaryReady =
+            errs.authErrorCount === 0 &&
+            errs.fallbackCount === 0 &&
+            (config.provider !== 'openai-codex' ||
+              hasOpenAiCodexAuth(profilePath))
           return {
             workerId: id,
             displayName: resolveSwarmWorkerDisplayName(id, worker),
@@ -257,7 +347,9 @@ export const Route = createFileRoute('/api/swarm-health')({
             specialty: worker?.specialty?.trim() || null,
             mission: worker?.mission?.trim() || null,
             skills: worker?.skills?.length ? worker.skills : [],
-            capabilities: worker?.capabilities?.length ? worker.capabilities : [],
+            capabilities: worker?.capabilities?.length
+              ? worker.capabilities
+              : [],
             profileFound: existsSync(profilePath),
             wrapperFound: existsSync(wrapperPath),
             model: config.model,
