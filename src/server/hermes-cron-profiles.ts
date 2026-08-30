@@ -1,29 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { getHermesRoot, getProfilesDir } from './claude-paths'
+import { getHermesRoot, getProfilesDir, resolveHermesBin } from './claude-paths'
 
 const PROFILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 const JOB_ID_RE = /^[A-Fa-f0-9]{8,64}$/
-
-const HERMES_BIN_CANDIDATES = [
-  process.env.HERMES_CLI_BIN,
-  join(homedir(), '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes'),
-  join(homedir(), '.local', 'bin', 'hermes'),
-  'hermes',
-].filter((value): value is string => Boolean(value))
-
-function resolveHermesBin(): string {
-  for (const candidate of HERMES_BIN_CANDIDATES) {
-    if (candidate.includes('/')) {
-      if (existsSync(candidate)) return candidate
-      continue
-    }
-    return candidate
-  }
-  return 'hermes'
-}
 
 type RawCronJob = Record<string, unknown>
 
@@ -73,9 +54,7 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 function normalizeDeliver(value: unknown): Array<string> {
   if (Array.isArray(value)) {
     return value
-      .flatMap((entry) =>
-        typeof entry === 'string' ? entry.split(',') : [],
-      )
+      .flatMap((entry) => (typeof entry === 'string' ? entry.split(',') : []))
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0)
   }
@@ -250,10 +229,14 @@ export function createProfileCronJob(
   profile: string,
   input: Record<string, unknown>,
 ): Record<string, unknown> {
-  const output = execFileSync(resolveHermesBin(), normalizeCreateArgs(profile, input), {
-    encoding: 'utf8',
-    timeout: 30_000,
-  })
+  const output = execFileSync(
+    resolveHermesBin(),
+    normalizeCreateArgs(profile, input),
+    {
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  )
   const createdId = parseCreatedJobId(output)
   const job = createdId
     ? (listProfileCronJobs().find(

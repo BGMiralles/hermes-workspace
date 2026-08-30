@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { resolveHermesBin } from './claude-paths'
 
 export interface CliTestResult {
   ok: boolean
@@ -13,24 +11,6 @@ export interface CliTestResult {
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g
 const DEFAULT_TIMEOUT_MS = 60_000
-
-const HERMES_BIN_CANDIDATES = [
-  process.env.HERMES_CLI_BIN,
-  join(homedir(), '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes'),
-  join(homedir(), '.local', 'bin', 'hermes'),
-  'hermes',
-].filter((value): value is string => Boolean(value))
-
-function resolveHermesBin(): string {
-  for (const candidate of HERMES_BIN_CANDIDATES) {
-    if (candidate.includes('/')) {
-      if (existsSync(candidate)) return candidate
-      continue
-    }
-    return candidate
-  }
-  return 'hermes'
-}
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '')
@@ -76,7 +56,11 @@ function execHermes(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ code: -1, stdout, stderr: stderr + `\n[spawn error] ${err.message}` })
+      resolve({
+        code: -1,
+        stdout,
+        stderr: stderr + `\n[spawn error] ${err.message}`,
+      })
     })
     child.on('close', (code) => {
       if (settled) return
