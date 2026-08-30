@@ -21,7 +21,8 @@ import {
   useState,
 } from 'react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
-import { fetchClaudeAuthStatus, type AuthStatus } from '@/lib/claude-auth'
+import type {AuthStatus} from '@/lib/claude-auth';
+import {  fetchClaudeAuthStatus } from '@/lib/claude-auth'
 import { cn } from '@/lib/utils'
 import { ConnectionStartupScreen } from '@/components/connection-startup-screen'
 import { ChatSidebar } from '@/screens/chat/components/chat-sidebar'
@@ -29,13 +30,6 @@ import { useChatSessions } from '@/screens/chat/hooks/use-chat-sessions'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { SIDEBAR_TOGGLE_EVENT } from '@/hooks/use-global-shortcuts'
 import { useSwipeNavigation } from '@/hooks/use-swipe-navigation'
-// Lazy: ChatPanel statically imports ChatScreen and with it the chat
-// markdown pipeline; keeping it out of the eager entry means non-chat
-// routes stop paying for chat at first paint. The chat route itself
-// already lazy-loads ChatScreen through its own boundary.
-const ChatPanel = lazy(() =>
-  import('@/components/chat-panel').then((m) => ({ default: m.ChatPanel })),
-)
 import { ChatPanelToggle } from '@/components/chat-panel-toggle'
 import { LoginScreen } from '@/components/auth/login-screen'
 import { MobileTabBar } from '@/components/mobile-tab-bar'
@@ -48,6 +42,13 @@ import { useMobileKeyboard } from '@/hooks/use-mobile-keyboard'
 import { SystemMetricsFooter } from '@/components/system-metrics-footer'
 import { CommandPalette } from '@/components/command-palette'
 import { useSettings } from '@/hooks/use-settings'
+// Lazy: ChatPanel statically imports ChatScreen and with it the chat
+// markdown pipeline; keeping it out of the eager entry means non-chat
+// routes stop paying for chat at first paint. The chat route itself
+// already lazy-loads ChatScreen through its own boundary.
+const ChatPanel = lazy(() =>
+  import('@/components/chat-panel').then((m) => ({ default: m.ChatPanel })),
+)
 // ActivityTicker moved to dashboard-only (too noisy for global header)
 
 const TerminalWorkspace = lazy(() =>
@@ -195,10 +196,18 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
   const activeFriendlyId = chatMatch ? chatMatch[1] : 'main'
   const isOnChatRoute = Boolean(chatMatch) || pathname === '/new'
   const isOnTerminalRoute = pathname.startsWith('/terminal')
-  const isOnPlaygroundRoute = pathname === '/playground' || pathname.startsWith('/playground/')
-  const isOnHermesWorldLandingRoute = pathname === '/hermes-world' || pathname.startsWith('/hermes-world/') || pathname === '/world' || pathname.startsWith('/world/')
+  const isOnPlaygroundRoute =
+    pathname === '/playground' || pathname.startsWith('/playground/')
+  const isOnHermesWorldLandingRoute =
+    pathname === '/hermes-world' ||
+    pathname.startsWith('/hermes-world/') ||
+    pathname === '/world' ||
+    pathname.startsWith('/world/')
+  const searchParams = (search ?? {}) as Record<string, unknown>
   const isEmbeddedSurface =
-    search?.embed === '1' || search?.embed === 'true' || search?.mode === 'embed'
+    searchParams.embed === '1' ||
+    searchParams.embed === 'true' ||
+    searchParams.mode === 'embed'
   const isChromeFreeSurface = isEmbeddedSurface || isOnHermesWorldLandingRoute
   const hideChatSidebar = isOnChatRoute && chatFocusMode
   const showDesktopSidebarBackdrop =
@@ -350,7 +359,9 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
         <div
           className={cn(
             'grid h-full grid-cols-1 grid-rows-[minmax(0,1fr)] overflow-hidden',
-            hideChatSidebar || isChromeFreeSurface ? 'md:grid-cols-1' : 'md:grid-cols-[auto_1fr]',
+            hideChatSidebar || isChromeFreeSurface
+              ? 'md:grid-cols-1'
+              : 'md:grid-cols-[auto_1fr]',
           )}
         >
           {/* Activity ticker bar */}
@@ -447,15 +458,21 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
           </main>
 
           {/* Chat panel — visible on non-chat routes (but not in HermesWorld, which has its own in-game chat) */}
-          {!isOnChatRoute && !isOnPlaygroundRoute && !isChromeFreeSurface && !isMobile && (
-            <Suspense fallback={null}>
-              <ChatPanel />
-            </Suspense>
-          )}
+          {!isOnChatRoute &&
+            !isOnPlaygroundRoute &&
+            !isChromeFreeSurface &&
+            !isMobile && (
+              <Suspense fallback={null}>
+                <ChatPanel />
+              </Suspense>
+            )}
         </div>
 
         {/* Floating chat toggle — visible on non-chat routes (but not in HermesWorld) */}
-        {!isChromeFreeSurface && !isOnChatRoute && !isOnPlaygroundRoute && !isMobile && <ChatPanelToggle />}
+        {!isChromeFreeSurface &&
+          !isOnChatRoute &&
+          !isOnPlaygroundRoute &&
+          !isMobile && <ChatPanelToggle />}
 
         {showDesktopSidebarBackdrop ? (
           <button
@@ -473,10 +490,15 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
 
       {!isChromeFreeSurface ? <MobileHamburgerMenu /> : null}
       {!isChromeFreeSurface ? <MobileTabBar /> : null}
-      {!isChromeFreeSurface && !isMobile && !isOnChatRoute && settings.showSystemMetricsFooter ? (
+      {!isChromeFreeSurface &&
+      !isMobile &&
+      !isOnChatRoute &&
+      settings.showSystemMetricsFooter ? (
         <SystemMetricsFooter leftOffsetPx={sidebarCollapsed ? 48 : 300} />
       ) : null}
-      {!isChromeFreeSurface ? <CommandPalette pathname={pathname} sessions={sessions} /> : null}
+      {!isChromeFreeSurface ? (
+        <CommandPalette pathname={pathname} sessions={sessions} />
+      ) : null}
     </>
   )
 }
