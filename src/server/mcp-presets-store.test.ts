@@ -1,4 +1,3 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   chmodSync,
   existsSync,
@@ -12,6 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   __resetPresetsCacheForTests,
@@ -52,8 +52,12 @@ function writeSeed(payload: unknown): void {
 }
 
 function writeUserFile(payload: unknown): void {
-  const path = join(homeDir, 'mcp-presets.json')
-  writeFileSync(path, typeof payload === 'string' ? payload : JSON.stringify(payload))
+  mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+  const path = join(homeDir, 'workspace', 'mcp-presets.json')
+  writeFileSync(
+    path,
+    typeof payload === 'string' ? payload : JSON.stringify(payload),
+  )
 }
 
 beforeEach(() => {
@@ -125,7 +129,8 @@ describe('readPresets', () => {
   })
 
   it('returns source=invalid for malformed user JSON and preserves the file unchanged', async () => {
-    const path = join(homeDir, 'mcp-presets.json')
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    const path = join(homeDir, 'workspace', 'mcp-presets.json')
     const corrupt = '{this is not valid json'
     writeUserFile(corrupt)
     const result = await readPresets()
@@ -139,14 +144,13 @@ describe('readPresets', () => {
   it('rejects duplicate ids with a path-prefixed error', async () => {
     writeUserFile({
       version: 1,
-      presets: [
-        { ...VALID_SEED.presets[0] },
-        { ...VALID_SEED.presets[0] },
-      ],
+      presets: [{ ...VALID_SEED.presets[0] }, { ...VALID_SEED.presets[0] }],
     })
     const result = await readPresets()
     expect(result.source).toBe('invalid')
-    const dupeErr = result.validationErrors?.find((e) => e.path === 'presets[1].id')
+    const dupeErr = result.validationErrors?.find(
+      (e) => e.path === 'presets[1].id',
+    )
     expect(dupeErr?.message).toMatch(/duplicate/i)
   })
 
@@ -264,7 +268,7 @@ describe('readPresets', () => {
     try {
       const result = await readPresets()
       expect(result.source).toBe('seed')
-      expect(existsSync(join(altHome, 'mcp-presets.json'))).toBe(true)
+      expect(existsSync(join(altHome, 'workspace', 'mcp-presets.json'))).toBe(true)
     } finally {
       rmSync(altHome, { recursive: true, force: true })
       process.env.HERMES_HOME = homeDir
@@ -284,9 +288,11 @@ describe('readPresets', () => {
 
   // HIGH-3: stat errors that are not ENOENT
   it('returns source=invalid when user file exists but is permission-denied (EACCES)', async () => {
+    if (process.platform === 'win32') return // chmod 0o000 does not block owner reads on Windows
     // Skip on platforms where chmod doesn't restrict root
     if (process.getuid?.() === 0) return
-    const path = join(homeDir, 'mcp-presets.json')
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    const path = join(homeDir, 'workspace', 'mcp-presets.json')
     writeFileSync(path, JSON.stringify(VALID_SEED))
     chmodSync(path, 0o000)
     __resetPresetsCacheForTests()
@@ -301,7 +307,9 @@ describe('readPresets', () => {
   })
 
   it('returns source=invalid when user file path is a dangling symlink', async () => {
-    const path = join(homeDir, 'mcp-presets.json')
+    if (process.platform === 'win32') return // symlink requires privileges on Windows
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    const path = join(homeDir, 'workspace', 'mcp-presets.json')
     const nonexistent = join(homeDir, 'does-not-exist.json')
     symlinkSync(nonexistent, path)
     __resetPresetsCacheForTests()
@@ -313,7 +321,8 @@ describe('readPresets', () => {
 
   // MED-5: cache detects same-size same-mtime edits via inode/ctime
   it('cache invalidates on same-size same-mtime edit (detects via ctime/inode)', async () => {
-    const path = join(homeDir, 'mcp-presets.json')
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    const path = join(homeDir, 'workspace', 'mcp-presets.json')
     const base = JSON.stringify(VALID_SEED)
     writeFileSync(path, base)
     const r1 = await readPresets()
@@ -325,12 +334,15 @@ describe('readPresets', () => {
       presets: [{ ...VALID_SEED.presets[0], id: 'altid' }],
     })
     // Pad or trim so lengths match
-    const padded = alt.length < base.length
-      ? alt + ' '.repeat(base.length - alt.length)
-      : alt.slice(0, base.length)
+    const padded =
+      alt.length < base.length
+        ? alt + ' '.repeat(base.length - alt.length)
+        : alt.slice(0, base.length)
     expect(padded.length).toBe(base.length)
 
-    const { mtime } = readFileSync(path) ? { mtime: new Date() } : { mtime: new Date() }
+    const { mtime } = readFileSync(path)
+      ? { mtime: new Date() }
+      : { mtime: new Date() }
     // Get mtime before write
     const { statSync } = await import('node:fs')
     const beforeMtime = statSync(path).mtime
@@ -347,25 +359,38 @@ describe('readPresets', () => {
 
   // MED-6: category allowlist
   it('rejects preset with unknown category', async () => {
-    writeFileSync(join(homeDir, 'mcp-presets.json'), JSON.stringify({
-      version: 1,
-      presets: [{ ...VALID_SEED.presets[0], category: 'RandomCategory' }],
-    }))
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    writeFileSync(
+      join(homeDir, 'workspace', 'mcp-presets.json'),
+      JSON.stringify({
+        version: 1,
+        presets: [{ ...VALID_SEED.presets[0], category: 'RandomCategory' }],
+      }),
+    )
     __resetPresetsCacheForTests()
     const result = await readPresets()
     expect(result.source).toBe('invalid')
-    const err = result.validationErrors?.find((e) => e.path === 'presets[0].category')
+    const err = result.validationErrors?.find(
+      (e) => e.path === 'presets[0].category',
+    )
     expect(err).toBeDefined()
     expect(err?.message).toMatch(/must be one of/)
   })
 
   it('defaults category to Custom when missing', async () => {
-    const presetWithoutCategory = { ...VALID_SEED.presets[0] } as Record<string, unknown>
+    const presetWithoutCategory = { ...VALID_SEED.presets[0] } as Record<
+      string,
+      unknown
+    >
     delete presetWithoutCategory.category
-    writeFileSync(join(homeDir, 'mcp-presets.json'), JSON.stringify({
-      version: 1,
-      presets: [presetWithoutCategory],
-    }))
+    mkdirSync(join(homeDir, 'workspace'), { recursive: true })
+    writeFileSync(
+      join(homeDir, 'workspace', 'mcp-presets.json'),
+      JSON.stringify({
+        version: 1,
+        presets: [presetWithoutCategory],
+      }),
+    )
     __resetPresetsCacheForTests()
     const result = await readPresets()
     expect(result.source).toBe('user-file')
