@@ -2,6 +2,7 @@ import { URL, fileURLToPath } from 'node:url'
 import { execSync, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import net from 'node:net'
 import { resolve, dirname } from 'node:path'
 import os from 'node:os'
@@ -11,7 +12,7 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 // nitro plugin removed (tanstackStart handles server runtime)
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, transformWithEsbuild } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
 // ---------------------------------------------------------------------------
@@ -28,7 +29,8 @@ import viteTsConfigPaths from 'vite-tsconfig-paths'
 function resolveClaudeAgentDir(env: Record<string, string>): string | null {
   const candidates: string[] = []
 
-  const explicitAgentPath = env.HERMES_AGENT_PATH?.trim() || env.CLAUDE_AGENT_PATH?.trim()
+  const explicitAgentPath =
+    env.HERMES_AGENT_PATH?.trim() || env.CLAUDE_AGENT_PATH?.trim()
   if (explicitAgentPath) {
     candidates.push(explicitAgentPath)
   }
@@ -85,6 +87,117 @@ async function isClaudeAgentHealthy(port = 8642): Promise<boolean> {
     return false
   }
 }
+
+// ---------------------------------------------------------------------------
+// safe-ssr-reload: guard against dev-server crashes on partial/invalid edits
+//
+// On Windows, an in-place rewrite of a watched .ts file (patch-style writes,
+// editors that truncate-then-fill) can race Vite's watcher: the SSR module
+// runner full-reloads a module whose source is momentarily missing or
+// syntactically invalid, the re-import throws, and Node dies with a native
+// crash (0xC0000409 / exit 3221226505) instead of a catchable JS error. Every
+// such crash kills the dev server and any in-flight agent task/stream.
+//
+// This plugin intercepts the change event for SSR-side TS files, validates the
+// new contents parse with esbuild, and suppresses the reload while invalid.
+// When the file is fixed (a subsequent change event parses cleanly), the
+// pending reload is applied. Result: mid-edit states never reach the module
+// runner, so a broken intermediate state degrades to "stale module" instead of
+// "dead dev server".
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// safe-ssr-reload: guard against dev-server crashes on partial/invalid edits
+//
+// On Windows, an in-place rewrite of a watched .ts file (patch-style writes,
+// editors that truncate-then-fill) can race Vite's watcher: the SSR module
+// runner full-reloads a module whose source is momentarily missing or
+// syntactically invalid, the re-import throws, and Node dies with a native
+// crash (0xC0000409 / exit 3221226505) instead of a catchable JS error. Every
+// such crash kills the dev server and any in-flight agent task/stream.
+//
+// This plugin wraps the chokidar watcher's `emit` and swallows `change`
+// events for SSR-side TS/TSX files whose new contents do not parse (checked
+// with esbuild, the same transform Vite uses). While a file is unparsable its
+// change events are dropped, so Vite never sees the broken state; the first
+// change that parses cleanly passes through as a normal reload. A mid-edit
+// window therefore degrades to "stale module" instead of "dead dev server".
+// ---------------------------------------------------------------------------
+const safeSsrReloadPlugin = () => ({
+  name: 'safe-ssr-reload',
+  apply: 'serve' as const,
+  configureServer(server: import('vite').ViteDevServer) {
+    const guard = new Set<string>() // files currently suppressed
+    const debounce = new Map<string, ReturnType<typeof setTimeout>>()
+
+    const isGuarded = (file: string) =>
+      file.includes('/src/routes/') || file.includes('/src/server/')
+
+    const looksParseable = async (file: string): Promise<boolean> => {
+      try {
+        const code = await readFile(file, 'utf8')
+        if (!code.trim()) return false // truncate-then-fill window
+        const loader = file.endsWith('.tsx')
+          ? 'tsx'
+          : file.endsWith('.ts')
+            ? 'ts'
+            : 'jsx'
+        await transformWithEsbuild(code, file, { loader })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const originalEmit = server.watcher.emit.bind(server.watcher)
+    server.watcher.emit = function (event: string, ...args: unknown[]) {
+      if (event !== 'change') return originalEmit(event, ...args)
+      const raw = String(args[0] ?? '')
+      const file = raw.replace(/\\/g, '/')
+      if (!isGuarded(file) || !/\.(ts|tsx)$/.test(file)) {
+        return originalEmit(event, ...args)
+      }
+      const existing = debounce.get(file)
+      if (existing) clearTimeout(existing)
+      // Hold the event briefly to coalesce multi-fire saves, then validate.
+      return true
+    } as typeof server.watcher.emit
+
+    // Because emit is now async-deferred for guarded files, re-drive valid
+    // changes manually after the parse window.
+    server.watcher.on('raw', (event: string, rawPath: string) => {
+      if (event !== 'change') return
+      const file = String(rawPath).replace(/\\/g, '/')
+      if (!isGuarded(file) || !/\.(ts|tsx)$/.test(file)) return
+      const existing = debounce.get(file)
+      if (existing) clearTimeout(existing)
+      debounce.set(
+        file,
+        setTimeout(async () => {
+          debounce.delete(file)
+          if (await looksParseable(file)) {
+            if (guard.delete(file)) {
+              server.config.logger.info(
+                `[safe-ssr-reload] ${file} valid again — applying deferred reload`,
+              )
+            }
+            originalEmit('change', String(rawPath))
+          } else if (!guard.has(file)) {
+            guard.add(file)
+            server.config.logger.warn(
+              `[safe-ssr-reload] ${file} is unparsable (mid-edit?) — suppressing reload until it parses`,
+            )
+          }
+        }, 60),
+      )
+    })
+
+    server.httpServer?.on('close', () => {
+      for (const t of debounce.values()) clearTimeout(t)
+      debounce.clear()
+      guard.clear()
+    })
+  },
+})
 
 const config = defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -437,6 +550,7 @@ const config = defineConfig(({ mode, command }) => {
         '**/node_modules/**',
         '**/dist/**',
         '**/skills-bundle/**',
+        'e2e/**',
         '**/.{idea,git,cache,output,temp}/**',
       ],
       // Force vitest to run React through its own transform pipeline so ESM
@@ -579,6 +693,7 @@ const config = defineConfig(({ mode, command }) => {
       viteTsConfigPaths({
         projects: ['./tsconfig.json'],
       }),
+      safeSsrReloadPlugin(),
       tailwindcss(),
       tanstackStart(),
       viteReact(),
