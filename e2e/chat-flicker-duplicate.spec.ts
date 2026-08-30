@@ -51,8 +51,12 @@ test.describe('Chat UI flicker #441', () => {
     const producingCount = await producingState.count()
     expect(producingCount).toBe(0)
 
-    // VERIFY: The chat input is visible (page is functional)
-    const chatInput = page.locator('textarea, [contenteditable="true"]').first()
+    // VERIFY: The chat input is visible (page is functional). Exclude the
+    // embedded xterm terminal's hidden helper textarea — it is the first
+    // <textarea> in the DOM but never user-visible.
+    const chatInput = page
+      .locator('textarea:not(.xterm-helper-textarea), [contenteditable="true"]')
+      .first()
     await expect(chatInput).toBeVisible({ timeout: 5000 })
   })
 })
