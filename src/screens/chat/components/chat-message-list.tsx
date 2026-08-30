@@ -203,7 +203,12 @@ function ThinkingBubble({
 
   // Build a meaningful status label from live activity
   const activeToolNames = activeToolCalls
-    .filter((tc) => tc.phase !== 'done' && tc.phase !== 'complete' && tc.phase !== 'completed')
+    .filter(
+      (tc) =>
+        tc.phase !== 'done' &&
+        tc.phase !== 'complete' &&
+        tc.phase !== 'completed',
+    )
     .map((tc) => tc.name.replace(/_/g, ' '))
   const liveToolNames = liveToolActivity.map((a) => a.name.replace(/_/g, ' '))
   const uniqueNames = [...new Set([...activeToolNames, ...liveToolNames])]
@@ -391,10 +396,10 @@ function StatusLine() {
   return (
     <div className="flex items-center gap-2 text-[11px] text-primary-400 dark:text-primary-500 py-0.5">
       <span className="inline-block size-1.5 rounded-full bg-amber-400 animate-pulse" />
-      <span className="opacity-80">
-        {heartbeatActivity || 'Working…'}
+      <span className="opacity-80">{heartbeatActivity || 'Working…'}</span>
+      <span aria-hidden="true" className="opacity-40">
+        ·
       </span>
-      <span aria-hidden="true" className="opacity-40">·</span>
       <span className="tabular-nums opacity-50 font-mono">{elapsedLabel}</span>
     </div>
   )
@@ -427,7 +432,9 @@ function shouldHideSystemInjectedUserMessage(text: string): boolean {
   // Only hide messages that begin with known system-injected prompts. User
   // context summaries may quote these phrases later in the message and must
   // remain visible/persistent in the chat UI.
-  return HIDDEN_SYSTEM_USER_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
+  return HIDDEN_SYSTEM_USER_PREFIXES.some((prefix) =>
+    trimmed.startsWith(prefix),
+  )
 }
 
 function getChronologyRank(message: ChatMessage): number {
@@ -519,6 +526,57 @@ function isAssistantToolCallOnlyMessage(message: ChatMessage): boolean {
   return hasToolCalls && text.trim().length === 0
 }
 
+/**
+ * Summarize tool-only assistant activity that trails the final assistant text
+ * reply (a turn still in flight whose tool calls have not yet produced a new
+ * assistant text message). Returns null when the thread already ends with
+ * assistant text, i.e. there is no hidden in-flight activity to surface.
+ */
+export function getTrailingToolOnlyTurnSummary(
+  displayMessages: Array<ChatMessage>,
+): { count: number; toolNames: Array<string>; hasFinalAssistantText: boolean } | null {
+  const isToolOnly = (message: ChatMessage) =>
+    isAssistantToolCallOnlyMessage(message) ||
+    (message.role === 'tool' || message.role === 'toolResult')
+
+  let lastAssistantTextIndex = -1
+  displayMessages.forEach((message, index) => {
+    if (
+      message.role === 'assistant' &&
+      !isAssistantToolCallOnlyMessage(message)
+    ) {
+      lastAssistantTextIndex = index
+    }
+  })
+
+  const trailing = displayMessages.slice(lastAssistantTextIndex + 1)
+  const toolOnlyMessages = trailing.filter(isToolOnly)
+  if (
+    toolOnlyMessages.length === 0 ||
+    toolOnlyMessages.length !== trailing.length
+  ) {
+    return null
+  }
+
+  const toolNames: Array<string> = []
+  toolOnlyMessages.forEach((message) => {
+    const calls = getToolCallsFromMessage(message)
+    calls.forEach((call) => {
+      if (call.name && !toolNames.includes(call.name)) toolNames.push(call.name)
+    })
+    if (message.role === 'tool' || message.role === 'toolResult') {
+      const name = (message as { toolName?: string }).toolName
+      if (name && !toolNames.includes(name)) toolNames.push(name)
+    }
+  })
+
+  return {
+    count: toolOnlyMessages.length,
+    toolNames,
+    hasFinalAssistantText: lastAssistantTextIndex >= 0,
+  }
+}
+
 export function buildDisplayEntries(
   displayMessages: Array<ChatMessage>,
 ): Array<DisplayEntry> {
@@ -547,7 +605,10 @@ export function buildDisplayEntries(
       attachedToolMessages: [],
     }
 
-    if (message.role === 'assistant' && pendingAssistantToolMessages.length > 0) {
+    if (
+      message.role === 'assistant' &&
+      pendingAssistantToolMessages.length > 0
+    ) {
       entry.attachedToolMessages.push(...pendingAssistantToolMessages)
       pendingAssistantToolMessages = []
     }
@@ -556,10 +617,9 @@ export function buildDisplayEntries(
   })
 
   if (pendingAssistantToolMessages.length > 0) {
-    const previousEntry = entries[entries.length - 1]
-    if (previousEntry?.message.role === 'assistant') {
-      previousEntry.attachedToolMessages.push(...pendingAssistantToolMessages)
-    }
+    // Trailing tool-only assistant messages after the final text reply are
+    // persisted mid-turn state; do NOT attach them to the previous text reply.
+    pendingAssistantToolMessages = []
   }
 
   return entries
@@ -1245,19 +1305,13 @@ function ChatMessageListComponent({
                 ? 'calling'
                 : toolCall.phase === 'failed' || toolCall.phase === 'error'
                   ? 'error'
-                  : toolCall.phase === 'calling' ||
-                      toolCall.phase === 'running'
+                  : toolCall.phase === 'calling' || toolCall.phase === 'running'
                     ? toolCall.phase
                     : 'calling',
           args: tcAny.args,
           preview:
-            typeof tcAny.preview === 'string'
-              ? (tcAny.preview)
-              : undefined,
-          result:
-            typeof tcAny.result === 'string'
-              ? (tcAny.result)
-              : undefined,
+            typeof tcAny.preview === 'string' ? tcAny.preview : undefined,
+          result: typeof tcAny.result === 'string' ? tcAny.result : undefined,
         }
       })
     }
@@ -1947,37 +2001,39 @@ function ChatMessageListComponent({
                     <div className="min-w-0 flex-1 pt-1">
                       {normalizedStreamingToolCalls.length > 0 ? (
                         <TuiActivityCard
-                          toolSections={normalizedStreamingToolCalls.slice(-3).map((tc) => {
-                            const phase = tc.phase
-                            const state =
-                              phase === 'error'
-                                ? ('output-error' as const)
-                                : phase === 'done'
-                                  ? ('output-available' as const)
-                                  : phase === 'running'
-                                    ? ('input-streaming' as const)
-                                    : ('input-available' as const)
-                            return {
-                              key: tc.id,
-                              type: tc.name,
-                              input:
-                                tc.args &&
-                                typeof tc.args === 'object' &&
-                                !Array.isArray(tc.args)
-                                  ? (tc.args as Record<string, unknown>)
-                                  : undefined,
-                              preview: tc.preview,
-                              outputText:
-                                state === 'output-available'
-                                  ? tc.result || ''
-                                  : '',
-                              errorText:
-                                state === 'output-error'
-                                  ? tc.result || 'Tool failed'
-                                  : undefined,
-                              state,
-                            }
-                          })}
+                          toolSections={normalizedStreamingToolCalls
+                            .slice(-3)
+                            .map((tc) => {
+                              const phase = tc.phase
+                              const state =
+                                phase === 'error'
+                                  ? ('output-error' as const)
+                                  : phase === 'done'
+                                    ? ('output-available' as const)
+                                    : phase === 'running'
+                                      ? ('input-streaming' as const)
+                                      : ('input-available' as const)
+                              return {
+                                key: tc.id,
+                                type: tc.name,
+                                input:
+                                  tc.args &&
+                                  typeof tc.args === 'object' &&
+                                  !Array.isArray(tc.args)
+                                    ? (tc.args as Record<string, unknown>)
+                                    : undefined,
+                                preview: tc.preview,
+                                outputText:
+                                  state === 'output-available'
+                                    ? tc.result || ''
+                                    : '',
+                                errorText:
+                                  state === 'output-error'
+                                    ? tc.result || 'Tool failed'
+                                    : undefined,
+                                state,
+                              }
+                            })}
                           thinking={null}
                           isStreaming={true}
                           formatLabel={(name) => name.replace(/_/g, ' ')}
