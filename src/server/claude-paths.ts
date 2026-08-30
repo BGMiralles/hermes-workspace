@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, normalize, sep } from 'node:path'
+import { dirname, isAbsolute, join, normalize, sep } from 'node:path'
 
 function isProfilesChild(pathValue: string): boolean {
   const parts = normalize(pathValue).split(sep).filter(Boolean)
@@ -8,7 +9,9 @@ function isProfilesChild(pathValue: string): boolean {
 
 function isProfileHome(pathValue: string): boolean {
   const parts = normalize(pathValue).split(sep).filter(Boolean)
-  return parts.length >= 3 && parts.at(-3) === 'profiles' && parts.at(-1) === 'home'
+  return (
+    parts.length >= 3 && parts.at(-3) === 'profiles' && parts.at(-1) === 'home'
+  )
 }
 
 function hermesRootFromProfile(pathValue: string): string | null {
@@ -62,3 +65,38 @@ export const getClaudeRoot = getHermesRoot
 export const getWorkspaceClaudeHome = getWorkspaceHermesHome
 export const getProfileClaudeHome = getProfileHermesHome
 export const getUserHomeForClaudeRoot = getUserHomeForHermesRoot
+
+const HERMES_BIN_CANDIDATES = (): Array<string> => {
+  const hermesRoot = getHermesRoot()
+  return [
+    process.env.HERMES_CLI_BIN,
+    // Native macOS/Linux installs (Nous installer layout).
+    join(hermesRoot, 'hermes-agent', '.venv', 'bin', 'hermes'),
+    join(hermesRoot, 'hermes-agent', 'venv', 'bin', 'hermes'),
+    // Windows install layout (AppData/Local/hermes). Resolved via the
+    // hermes root so it works regardless of where HOME actually is.
+    join(hermesRoot, 'hermes-agent', '.venv', 'Scripts', 'hermes.exe'),
+    join(hermesRoot, 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'),
+    join(homedir(), '.local', 'bin', 'hermes'),
+    'hermes',
+  ].filter((value): value is string => Boolean(value))
+}
+
+/**
+ * Resolve the Hermes CLI binary. Unlike the earlier per-file logic, this uses
+ * path.isAbsolute() (not a '/' substring check) so it works on Windows where
+ * path.join returns backslashes — previously a path-holding candidate was
+ * returned unconditionally without verifying it existed, spawning ENOENT.
+ * Only absolute candidates are existence-checked; bare names like `hermes`
+ * are left for PATH resolution.
+ */
+export function resolveHermesBin(): string {
+  for (const candidate of HERMES_BIN_CANDIDATES()) {
+    if (isAbsolute(candidate)) {
+      if (existsSync(candidate)) return candidate
+      continue
+    }
+    return candidate
+  }
+  return 'hermes'
+}
