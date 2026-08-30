@@ -49,7 +49,7 @@ afterEach(() => {
 
 async function loadHandlers(modulePath: string) {
   const mod = await import(modulePath)
-  return (mod as any).Route.server.handlers
+  return (mod).Route.server.handlers
 }
 
 describe('canonical /api/hermes-config route', () => {
@@ -95,9 +95,9 @@ describe('canonical /api/hermes-config route', () => {
     const body = await res.json()
 
     expect(body).toMatchObject({ ok: true, message: 'Default model updated.' })
-    expect(
-      fs.readFileSync(path.join(tmpHome, 'config.yaml'), 'utf-8'),
-    ).toMatch(/provider: openrouter/)
+    expect(fs.readFileSync(path.join(tmpHome, 'config.yaml'), 'utf-8')).toMatch(
+      /provider: openrouter/,
+    )
   })
 
   it('PATCH legacy { config } body deep-merges and preserves siblings', async () => {
@@ -140,7 +140,11 @@ describe('canonical /api/hermes-config route', () => {
     const res = await handlers.PATCH({
       request: new Request('http://localhost/api/hermes-config', {
         method: 'PATCH',
-        body: JSON.stringify({ action: 'set-api-key', envKey: 'X', value: 'y' }),
+        body: JSON.stringify({
+          action: 'set-api-key',
+          envKey: 'X',
+          value: 'y',
+        }),
       }),
     })
     expect(res.status).toBe(503)
@@ -150,6 +154,14 @@ describe('canonical /api/hermes-config route', () => {
 
 describe('legacy /api/claude-config alias', () => {
   it('GET aliases provider.maskedCredentials to provider.maskedKeys for the legacy /settings page', async () => {
+    // The 503 test above vi.doMock'd gateway-capabilities with config:false;
+    // vi.doUnmock does not reliably restore the top-level vi.mock for later
+    // dynamic imports, so re-assert the healthy-capability mock here.
+    vi.doMock('../../server/gateway-capabilities', () => ({
+      ensureGatewayProbed: vi.fn(),
+      getCapabilities: () => ({ config: true }),
+    }))
+
     fs.writeFileSync(
       path.join(tmpHome, '.env'),
       'OPENROUTER_API_KEY=sk-test-1234\n',
@@ -161,6 +173,7 @@ describe('legacy /api/claude-config alias', () => {
       request: new Request('http://localhost/api/claude-config'),
     })
     const body = await res.json()
+
     const openrouter = body.providers.find((p: any) => p.id === 'openrouter')
 
     expect(openrouter.maskedKeys).toEqual(openrouter.maskedCredentials)
