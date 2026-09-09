@@ -59,7 +59,7 @@ workers:
     name: Builder
     role: Scoped Implementation Agent
     specialty: focused implementation, tests, small diffs, integration fixes
-    model: openrouter/google/gemini-3.7-flash
+    model: openrouter/google/gemini-3.8-flash
     mission: Ship scoped product/code slices with tests, minimal diffs, and clear verification evidence.
     profile: builder
     modes:
@@ -211,7 +211,7 @@ workers:
     name: Data Ops
     role: Data / Metrics / Pipeline Engineer
     specialty: ETL, forward-tracker ingestion, metrics pipelines, Icaro data integration, deterministic data work
-    model: openrouter/deepseek/deepseek-v4-flash-0731
+    model: openrouter/z-ai/glm-5.3-flash
     mission: Own the deterministic data layer — ingest, validate, and maintain the forward-tracker metrics and pipelines that backtest and paper stages depend on.
     profile: data-ops
     modes:
@@ -256,7 +256,7 @@ workers:
     name: Watchdog
     role: Runtime Health / Alert Monitor
     specialty: process health, gateway status, cron health, forward-tracker liveness, quiet low-risk alerts
-    model: openrouter/deepseek/deepseek-v4-flash-0731
+    model: openrouter/z-ai/glm-5.3-flash
     mission: Keep the swarm and its trading infrastructure observable and healthy with quiet, low-risk checks and timely alerts.
     profile: watchdog
     modes:
@@ -299,7 +299,7 @@ workers:
     name: Vanguard Routine
     role: Scheduled Routine / Cron Operator
     specialty: daily forward-tracker marking, scheduled jobs, maintenance routines, task-scheduler coordination
-    model: openrouter/deepseek/deepseek-v4-flash-0731
+    model: openrouter/z-ai/glm-5.3-flash
     mission: Run the deterministic scheduled routines — forward-tracker daily marks and recurring maintenance — on time and without drift.
     profile: vanguard-routine
     modes:
